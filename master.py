@@ -78,6 +78,8 @@ class Master(Service):
                 if not self.is_running:
                     break
                 self.wait_and_respawn_workers()
+                self.check_and_respawn_workers() # 其他非
+                self.wait_and_respawn_workers()
                 self.check_and_assign_tasks()
             except (SystemExit, KeyboardInterrupt):
                 logging.warn("Master:SystemExit, KeyboardInterrupt")
@@ -117,7 +119,35 @@ class Master(Service):
 
         except Exception as ex:
             logging.warn("check_and_assign_tasks exception:%s, traceback:%s", ex, traceback.format_exc())
-
+    def check_and_respawn_workers(self):
+        """
+        检测子进程 个数<self.worker_process_num 则拉起对应进程
+        :return:
+        """
+        try:
+            p = psutil.Process(os.getpid())
+            #self.logger.info("check_and_respawn_workers p.pid:%s", p.pid)
+            if len(p.children()) >= len(self.worker_process):
+                return True
+            self.logger.info("check_and_respawn_workers len(childrens):%s < self.worker_process:%s", len( p.children()), self.worker_process)
+            pids = [child.pid for child in p.children()]
+            pids = set(pids)
+            for idx in range(len(self.worker_process)):
+                worker = self.worker_process[idx]
+                if worker.pid not in pids:
+                    try:
+                        multiprocessing.current_process()._children.discard(worker.process)
+                    except Exception as ex:
+                        self.logger.warning(u"exception:%s, pid:%s,", ex, worker.pid)
+                    w = multiprocessing.Process(target=worker)
+                    w.daemon = True
+                    worker.process = w
+                    w.start()
+                    self.logger.warning("check_and_respawn_workers exit process worker.pid:%s, worker.no:%s, new create process: w.pid:%s ******", worker.pid, worker.worker_no, w.pid)
+                    worker.pid = w.pid  # 否则是None
+        except Exception as ex:
+            self.logger.warning("check_children_process exception:%s", ex)
+            
     def wait_and_respawn_workers(self):
         """
         监听僵死子进程
